@@ -19,8 +19,8 @@ let inputEntries = []; // Array of {words, inputFreq, qWords, Q, klField, degrad
 let nextEntryId = 0;
 
 // Layout parameters
-let minFontSize = 30; // Reduced range for less drastic size changes
-let maxFontSize = 54; // Reduced range for less drastic size changes
+let minFontSize = 32; // Uniform font size
+let maxFontSize = 32; // Uniform font size
 let lineHeight = 1.2;
 let margin = 20;
 
@@ -98,48 +98,48 @@ function initializePDistribution() {
     // Track words visible on screen to ensure no repeats within visible area
     let wordsOnScreen = new Set();
     
-    // Words per line
-    let wordsPerLine = 20;
-    
     // Fill page with words - overfill all directions
+    // Each row fills based on screen width (first/last word can be off screen)
     while (currentY < endY) {
-        // Each line starts at a different shifted position
-        // Shift must be negative or zero (starts before or at screen edge, never inside)
-        let shiftAmount = random(-width * 0.5, 0); // Shift up to 50% before screen, never positive
-        let currentX = shiftAmount; // Start from shifted position (no margin added)
+        // Each line starts before screen edge (shifted left)
+        let shiftAmount = random(-width * 0.3, -width * 0.1); // Start 10-30% before screen
+        let lineX = shiftAmount;
         
-        // Collect words for this line (20 words)
+        // Collect words for this line until we pass the right edge
         let lineWords = [];
         let lineWordIndices = [];
-        let maxFontOnLine = 0;
+        let maxFontOnLine = minFontSize;
         let wordsInCurrentLine = new Set(); // Track words used in current line to avoid duplicates
         
-        for (let w = 0; w < wordsPerLine && wordIndex < shuffledWords.length * 10; w++) {
+        // Set font size for measuring
+        textSize(maxFontSize);
+        
+        // Keep adding words until we pass the right edge of screen (with overfill)
+        let endX = width + width * 0.3; // End 30% past right edge
+        
+        while (lineX < endX) {
             // Find next word that's not used on screen AND not used in current line
             let word = null;
             let searchIndex = wordIndex;
             let attempts = 0;
-            let maxAttempts = shuffledWords.length * 2; // Allow more attempts to find unique word
+            let maxAttempts = shuffledWords.length * 2;
             
-            // Try to find an unused word (not on screen AND not in current line)
+            // Try to find an unused word
             while (attempts < maxAttempts && word === null) {
                 let candidate = shuffledWords[searchIndex % shuffledWords.length];
-                // Check both: not on screen AND not already in current line
                 if (!wordsOnScreen.has(candidate) && !wordsInCurrentLine.has(candidate)) {
                     word = candidate;
                     wordIndex = (searchIndex + 1) % shuffledWords.length;
-                    wordsInCurrentLine.add(candidate); // Mark as used in current line
+                    wordsInCurrentLine.add(candidate);
                 } else {
                     searchIndex++;
                     attempts++;
                 }
             }
             
-            // If we couldn't find a unique word after many attempts, reset tracking and use any word
+            // Fallback if no unique word found
             if (word === null) {
-                // Reset screen tracking for overflow areas, but still try to avoid current line duplicates
                 wordsOnScreen.clear();
-                // Try one more time to find a word not in current line
                 let fallbackAttempts = 0;
                 while (fallbackAttempts < shuffledWords.length && word === null) {
                     let candidate = shuffledWords[wordIndex % shuffledWords.length];
@@ -150,7 +150,6 @@ function initializePDistribution() {
                     wordIndex = (wordIndex + 1) % shuffledWords.length;
                     fallbackAttempts++;
                 }
-                // Last resort: use any word (shouldn't happen often)
                 if (word === null) {
                     word = shuffledWords[wordIndex % shuffledWords.length];
                     wordIndex = (wordIndex + 1) % shuffledWords.length;
@@ -159,19 +158,21 @@ function initializePDistribution() {
             
             let capitalizedWord = word.charAt(0).toUpperCase() + word.slice(1);
             lineWords.push(capitalizedWord);
-            lineWordIndices.push(wordIndex - 1);
+            lineWordIndices.push(word);
             
-            // Use variable font size with less drastic changes
             let fontSize = random(minFontSize, maxFontSize);
             maxFontOnLine = max(maxFontOnLine, fontSize);
             
             // Check if word is visible on screen
-            let isVisible = currentX >= -width * 0.1 && currentX <= width * 1.1 && 
+            let isVisible = lineX >= -width * 0.1 && lineX <= width * 1.1 && 
                            currentY >= -height * 0.1 && currentY <= height * 1.1;
             
             if (isVisible) {
                 wordsOnScreen.add(word);
             }
+            
+            // Advance lineX by word width
+            lineX += textWidth(capitalizedWord);
         }
         
         // Concatenate all words into one string without spaces
@@ -185,8 +186,8 @@ function initializePDistribution() {
         // Use average probability of words in the line
         let avgProb = 0;
         for (let i = 0; i < lineWordIndices.length; i++) {
-            let word = shuffledWords[lineWordIndices[i] % shuffledWords.length];
-            avgProb += wordFreq[word] || 0.0001;
+            let originalWord = lineWordIndices[i]; // Now stores the word directly
+            avgProb += wordFreq[originalWord] || 0.0001;
         }
         avgProb = avgProb / lineWords.length;
         
@@ -200,11 +201,11 @@ function initializePDistribution() {
         for (let w = 0; w < lineWords.length; w++) {
             let word = lineWords[w];
             let wordWidth = textWidth(word);
-            let wordX = currentX + cumulativeWidth;
+            let wordX = shiftAmount + cumulativeWidth;
             
             wordPositions.push({
                 word: word,
-                originalWord: shuffledWords[lineWordIndices[w] % shuffledWords.length],
+                originalWord: lineWordIndices[w], // Use stored original word directly
                 startChar: charOffset,
                 endChar: charOffset + word.length,
                 x: wordX,
@@ -216,7 +217,7 @@ function initializePDistribution() {
         
         pWords.push({
             word: concatenatedString,
-            x: currentX,
+            x: shiftAmount,
             y: currentY,
             fontSize: maxFontOnLine,
             prob: avgProb,
@@ -243,8 +244,6 @@ function initializePDistribution() {
 
 function processUserInput(inputText) {
     if (!inputText || inputText.trim() === "") {
-        // Only clear if explicitly empty (user wants to reset)
-        // For now, keep accumulated words
         return;
     }
     
