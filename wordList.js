@@ -1,0 +1,47 @@
+// Word List - Frequently used words for the KL Field visualization
+// This file contains the word list used to populate the P (Truth) distribution layer
+// You can easily modify this list to change which words appear on the poster
+
+const wordList = [
+    'say', 'get', 'make', 'go', 'know', 'think', 'see', 'come', 'want', 'look',
+    'use', 'find', 'give', 'tell', 'work', 'call', 'try', 'ask', 'need', 'feel',
+    'time', 'people', 'way', 'day', 'thing', 'man', 'woman', 'life', 'child', 'world',
+    'school', 'state', 'family', 'student', 'group', 'problem', 'fact', 'hand', 'place', 'case',
+    'good', 'new', 'first', 'last', 'long', 'great', 'little', 'own', 'other', 'old',
+    'right', 'big', 'high', 'different', 'small', 'large', 'next', 'early', 'young', 'important',
+    'very', 'really', 'just', 'only', 'even', 'still', 'already', 'often', 'always', 'usually',
+    // Additional common words to expand the list
+    'year', 'week', 'month', 'hour', 'minute', 'second', 'moment', 'period', 'age', 'era',
+    'person', 'individual', 'human', 'adult', 'teenager', 'baby', 'parent', 'friend', 'teacher', 'doctor',
+    'house', 'home', 'room', 'building', 'office', 'store', 'restaurant', 'hospital', 'library', 'museum',
+    'car', 'bus', 'train', 'plane', 'bike', 'walk', 'run', 'drive', 'fly', 'travel',
+    'food', 'water', 'bread', 'milk', 'fruit', 'vegetable', 'meat', 'fish', 'rice', 'soup',
+    'book', 'story', 'article', 'paper', 'letter', 'email', 'message', 'note', 'report', 'document',
+    'color', 'red', 'blue', 'green', 'yellow', 'black', 'white', 'brown', 'orange', 'purple',
+    'number', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+    'happy', 'sad', 'angry', 'excited', 'tired', 'hungry', 'thirsty', 'sick', 'healthy', 'strong',
+    'learn', 'study', 'read', 'write', 'speak', 'listen', 'watch', 'observe', 'remember', 'forget',
+    'help', 'support', 'care', 'love', 'like', 'hate', 'enjoy', 'prefer', 'choose', 'decide',
+    'start', 'begin', 'end', 'finish', 'stop', 'continue', 'pause', 'wait', 'hurry', 'slow',
+    'fast', 'quick', 'slow', 'easy', 'hard', 'difficult', 'simple', 'complex', 'clear', 'confusing',
+    'beautiful', 'ugly', 'pretty', 'nice', 'wonderful', 'terrible', 'amazing', 'awful', 'perfect', 'flawed',
+    'money', 'dollar', 'cent', 'price', 'cost', 'pay', 'buy', 'sell', 'shop', 'market',
+    'job', 'career', 'work', 'task', 'project', 'assignment', 'duty', 'responsibility', 'role', 'position',
+    'question', 'answer', 'problem', 'solution', 'issue', 'matter', 'topic', 'subject', 'theme', 'idea',
+    'city', 'town', 'village', 'country', 'nation', 'state', 'region', 'area', 'zone', 'district',
+    'morning', 'afternoon', 'evening', 'night', 'dawn', 'dusk', 'noon', 'midnight', 'sunrise', 'sunset',
+    'weather', 'sunny', 'rainy', 'cloudy', 'windy', 'snowy', 'stormy', 'foggy', 'clear', 'bright',
+    'animal', 'dog', 'cat', 'bird', 'fish', 'horse', 'cow', 'pig', 'sheep', 'chicken',
+    'tree', 'flower', 'grass', 'leaf', 'branch', 'root', 'seed', 'fruit', 'vegetable', 'plant',
+    'music', 'song', 'sound', 'noise', 'voice', 'sing', 'play', 'dance', 'listen', 'hear',
+    'game', 'play', 'sport', 'team', 'player', 'win', 'lose', 'score', 'goal', 'point',
+    'movie', 'film', 'show', 'television', 'video', 'watch', 'see', 'view', 'screen', 'picture',
+    'computer', 'phone', 'internet', 'website', 'email', 'message', 'text', 'call', 'video', 'app',
+    'clothes', 'shirt', 'pants', 'dress', 'shoes', 'hat', 'jacket', 'coat', 'sweater', 'socks',
+    'body', 'head', 'face', 'eye', 'ear', 'nose', 'mouth', 'hand', 'arm', 'leg',
+    'health', 'sick', 'well', 'ill', 'pain', 'hurt', 'medicine', 'doctor', 'hospital', 'treatment',
+    'education', 'school', 'university', 'college', 'class', 'lesson', 'student', 'teacher', 'learn', 'study',
+    'language', 'word', 'sentence', 'speak', 'talk', 'say', 'tell', 'ask', 'answer', 'question',
+    'nature', 'earth', 'sky', 'sun', 'moon', 'star', 'cloud', 'rain', 'snow', 'wind',
+    'science', 'research', 'experiment', 'discover', 'invent', 'create', 'develop', 'improve', 'change', 'progress'
+];

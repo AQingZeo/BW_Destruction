@@ -3,43 +3,50 @@
 // Layer 2: Model (Q) - User input text, iteratively degraded
 // Layer 3: KL Field - Primary visual: Damage(i) = P(i) * log(P(i)/Q(i))
 
-// Word list from wordList.md (most frequently used words)
-const wordList = [
-    'say', 'get', 'make', 'go', 'know', 'think', 'see', 'come', 'want', 'look',
-    'use', 'find', 'give', 'tell', 'work', 'call', 'try', 'ask', 'need', 'feel',
-    'time', 'people', 'way', 'day', 'thing', 'man', 'woman', 'life', 'child', 'world',
-    'school', 'state', 'family', 'student', 'group', 'problem', 'fact', 'hand', 'place', 'case',
-    'good', 'new', 'first', 'last', 'long', 'great', 'little', 'own', 'other', 'old',
-    'right', 'big', 'high', 'different', 'small', 'large', 'next', 'early', 'young', 'important',
-    'very', 'really', 'just', 'only', 'even', 'still', 'already', 'often', 'always', 'usually'
-];
+// Word list is loaded from wordList.js
+// The wordList constant is defined in wordList.js and should be available globally
 
 let P = []; // Truth distribution (word frequencies)
-let Q = []; // Model distribution (user input, degraded)
-let klField = []; // KL divergence field
 
 // Text layout
 let pWords = []; // Array of {word, x, y, fontSize, prob}
-let qWords = []; // Array of {word, x, y, fontSize, prob}
 let userInput = "";
+let accumulatedWords = []; // Accumulate all input words across multiple inputs
+let customFont; // Google Font variable
+
+// Input entries - each entry has its own independent degradation timeline
+let inputEntries = []; // Array of {words, inputFreq, qWords, Q, klField, degradationStep, entryId}
+let nextEntryId = 0;
 
 // Layout parameters
-let minFontSize = 12;
-let maxFontSize = 72;
+let minFontSize = 30; // Reduced range for less drastic size changes
+let maxFontSize = 54; // Reduced range for less drastic size changes
 let lineHeight = 1.2;
 let margin = 20;
 
 // Degradation parameters
-let degradationStep = 0;
 let maxDegradationSteps = 100;
 let samplingBias = 0.1;
-let compressionLoss = 0.15;
+let compressionLoss = 0.08; // Reduced from 0.15 to prevent Q from disappearing too quickly
 let noiseLevel = 0.05;
 let censorshipRegions = [];
+let censorshipProbability = 0.3; // Probability of applying censorship (reduced to prevent total erasure)
+
+// Exponential time factor for KL divergence amplification
+// This exponentially increases the "loss" visualization over time
+// Formula: KL_amplified = KL_base * exp(klTimeExponent * degradationStep)
+// Higher klTimeExponent = more dramatic loss visualization
+let klTimeExponent = 0.01; // Exponential growth rate (0.04 means ~4% growth per step, compounded) - REDUCED for slower change
+let klBaseMultiplier = 1.5; // Base multiplier to amplify initial KL values
 
 function setup() {
     let canvas = createCanvas(windowWidth, windowHeight);
     canvas.parent('canvas-container');
+    
+    // Load Google Font (Doto)
+    // Note: p5.js doesn't directly load Google Fonts, so we use CSS font-family
+    // The font will be available via CSS, we just need to set it in textFont
+    textFont('Doto, sans-serif');
     
     // Setup text input
     setupTextInput();
@@ -47,123 +54,177 @@ function setup() {
     // Initialize P distribution with word list
     initializePDistribution();
     
-    // Initialize Q with empty input (will be updated when user types)
-    initializeQDistribution("");
+    // Initialize input entries
+    accumulatedWords = []; // Initialize accumulated words
+    inputEntries = [];
+    nextEntryId = 0;
     
     // Initialize censorship regions
     initializeCensorship();
     
-    // Calculate initial KL field
-    calculateKLField();
+    // No initial KL field calculation needed - entries will calculate their own
 }
 
 function setupTextInput() {
-    // Input is created in HTML, just set up event listener
-    let input = select('#textInput');
-    let ui = select('#ui');
-    if (input && ui) {
-        // Handle Enter key
-        input.elt.addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                userInput = input.value();
-                processUserInput(userInput);
-                input.value('');
-            }
-        });
-        
-        // Show UI on focus
-        input.elt.addEventListener('focus', function() {
-            ui.elt.classList.add('active');
-        });
-        
-        // Hide UI on blur (after a short delay, unless hovering)
-        input.elt.addEventListener('blur', function() {
-            setTimeout(function() {
-                if (document.activeElement !== input.elt && !ui.elt.matches(':hover')) {
-                    ui.elt.classList.remove('active');
-                }
-            }, 300);
-        });
-        
-        // Show UI when mouse moves near top-left corner
-        let hideTimer;
-        document.addEventListener('mousemove', function(e) {
-            clearTimeout(hideTimer);
-            if (e.clientX < 350 && e.clientY < 100) {
-                ui.elt.classList.add('active');
-            } else {
-                // Hide after mouse leaves the area (unless focused or hovering)
-                if (document.activeElement !== input.elt) {
-                    hideTimer = setTimeout(function() {
-                        if (!ui.elt.matches(':hover') && !ui.elt.matches(':focus-within')) {
-                            ui.elt.classList.remove('active');
-                        }
-                    }, 1000);
-                }
-            }
-        });
+    // Use the input handler module
+    if (typeof inputHandler !== 'undefined') {
+        inputHandler.setup(processUserInput);
     }
 }
 
 function initializePDistribution() {
     // Create P: fill screen with words from wordList
-    // Prioritize font size, choose words randomly
+    // Group words into lines (20 words per line), concatenate without spaces
+    // Overfill all directions with shifted start points
+    // Variable font sizes with less drastic changes
     
     pWords = [];
-    let currentY = margin;
-    let currentX = margin;
-    let shuffledWords = [...wordList].sort(() => random() - 0.5); // Randomize word order
+    
+    // Shuffle words to randomize order, but ensure no repeats
+    let shuffledWords = [...wordList].sort(() => random() - 0.5);
     let wordIndex = 0;
     
-    // Calculate word frequencies (simple: equal weight for now, can be adjusted)
+    // Calculate word frequencies (equal weight)
     let wordFreq = {};
     wordList.forEach(word => {
         wordFreq[word] = 1.0 / wordList.length;
     });
     
-    // Fill page with words
-    textSize(maxFontSize); // Set initial size for measurement
-    while (currentY < height - margin && wordIndex < shuffledWords.length * 20) {
-        let word = shuffledWords[wordIndex % shuffledWords.length];
-        let capitalizedWord = word.charAt(0).toUpperCase() + word.slice(1);
+    // Start before screen top and extend beyond bottom
+    let startY = -height * 0.2; // Start 20% above screen
+    let endY = height * 1.2; // Extend 20% below screen
+    let currentY = startY;
+    
+    // Track words visible on screen to ensure no repeats within visible area
+    let wordsOnScreen = new Set();
+    
+    // Words per line
+    let wordsPerLine = 20;
+    
+    // Fill page with words - overfill all directions
+    while (currentY < endY) {
+        // Each line starts at a different shifted position
+        // Shift must be negative or zero (starts before or at screen edge, never inside)
+        let shiftAmount = random(-width * 0.5, 0); // Shift up to 50% before screen, never positive
+        let currentX = shiftAmount; // Start from shifted position (no margin added)
         
-        // Determine font size (prioritize larger sizes, but vary)
-        let fontSize = random(minFontSize, maxFontSize);
-        textSize(fontSize);
-        let wordWidth = textWidth(capitalizedWord);
+        // Collect words for this line (20 words)
+        let lineWords = [];
+        let lineWordIndices = [];
+        let maxFontOnLine = 0;
+        let wordsInCurrentLine = new Set(); // Track words used in current line to avoid duplicates
         
-        // Check if word fits on current line
-        if (currentX + wordWidth > width - margin) {
-            // Move to next line
-            let maxFontOnLine = 0;
-            // Find max font size on current line to determine line height
-            for (let j = pWords.length - 1; j >= 0; j--) {
-                if (pWords[j].y === currentY) {
-                    maxFontOnLine = max(maxFontOnLine, pWords[j].fontSize);
+        for (let w = 0; w < wordsPerLine && wordIndex < shuffledWords.length * 10; w++) {
+            // Find next word that's not used on screen AND not used in current line
+            let word = null;
+            let searchIndex = wordIndex;
+            let attempts = 0;
+            let maxAttempts = shuffledWords.length * 2; // Allow more attempts to find unique word
+            
+            // Try to find an unused word (not on screen AND not in current line)
+            while (attempts < maxAttempts && word === null) {
+                let candidate = shuffledWords[searchIndex % shuffledWords.length];
+                // Check both: not on screen AND not already in current line
+                if (!wordsOnScreen.has(candidate) && !wordsInCurrentLine.has(candidate)) {
+                    word = candidate;
+                    wordIndex = (searchIndex + 1) % shuffledWords.length;
+                    wordsInCurrentLine.add(candidate); // Mark as used in current line
                 } else {
-                    break;
+                    searchIndex++;
+                    attempts++;
                 }
             }
-            currentY += (maxFontOnLine > 0 ? maxFontOnLine : fontSize) * lineHeight;
-            currentX = margin;
             
-            if (currentY >= height - margin) break;
+            // If we couldn't find a unique word after many attempts, reset tracking and use any word
+            if (word === null) {
+                // Reset screen tracking for overflow areas, but still try to avoid current line duplicates
+                wordsOnScreen.clear();
+                // Try one more time to find a word not in current line
+                let fallbackAttempts = 0;
+                while (fallbackAttempts < shuffledWords.length && word === null) {
+                    let candidate = shuffledWords[wordIndex % shuffledWords.length];
+                    if (!wordsInCurrentLine.has(candidate)) {
+                        word = candidate;
+                        wordsInCurrentLine.add(candidate);
+                    }
+                    wordIndex = (wordIndex + 1) % shuffledWords.length;
+                    fallbackAttempts++;
+                }
+                // Last resort: use any word (shouldn't happen often)
+                if (word === null) {
+                    word = shuffledWords[wordIndex % shuffledWords.length];
+                    wordIndex = (wordIndex + 1) % shuffledWords.length;
+                }
+            }
+            
+            let capitalizedWord = word.charAt(0).toUpperCase() + word.slice(1);
+            lineWords.push(capitalizedWord);
+            lineWordIndices.push(wordIndex - 1);
+            
+            // Use variable font size with less drastic changes
+            let fontSize = random(minFontSize, maxFontSize);
+            maxFontOnLine = max(maxFontOnLine, fontSize);
+            
+            // Check if word is visible on screen
+            let isVisible = currentX >= -width * 0.1 && currentX <= width * 1.1 && 
+                           currentY >= -height * 0.1 && currentY <= height * 1.1;
+            
+            if (isVisible) {
+                wordsOnScreen.add(word);
+            }
         }
         
-        // Store word position and properties
-        let prob = wordFreq[word] || 0.0001;
+        // Concatenate all words into one string without spaces
+        let concatenatedString = lineWords.join('');
+        
+        // Use max font size for this line
+        textSize(maxFontOnLine);
+        let stringWidth = textWidth(concatenatedString);
+        
+        // Store as single word entry for the entire concatenated string
+        // Use average probability of words in the line
+        let avgProb = 0;
+        for (let i = 0; i < lineWordIndices.length; i++) {
+            let word = shuffledWords[lineWordIndices[i] % shuffledWords.length];
+            avgProb += wordFreq[word] || 0.0001;
+        }
+        avgProb = avgProb / lineWords.length;
+        
+        // Store individual word positions within the concatenated string
+        let wordPositions = [];
+        let charOffset = 0;
+        textSize(maxFontOnLine);
+        // Calculate cumulative width for accurate positioning
+        let cumulativeWidth = 0;
+        
+        for (let w = 0; w < lineWords.length; w++) {
+            let word = lineWords[w];
+            let wordWidth = textWidth(word);
+            let wordX = currentX + cumulativeWidth;
+            
+            wordPositions.push({
+                word: word,
+                originalWord: shuffledWords[lineWordIndices[w] % shuffledWords.length],
+                startChar: charOffset,
+                endChar: charOffset + word.length,
+                x: wordX,
+                width: wordWidth
+            });
+            charOffset += word.length;
+            cumulativeWidth += wordWidth; // Use actual measured width, not estimated
+        }
+        
         pWords.push({
-            word: capitalizedWord,
+            word: concatenatedString,
             x: currentX,
             y: currentY,
-            fontSize: fontSize,
-            prob: prob
+            fontSize: maxFontOnLine,
+            prob: avgProb,
+            wordPositions: wordPositions // Store individual word positions
         });
         
-        // Update position (no space between words)
-        currentX += wordWidth;
-        
-        wordIndex++;
+        // Move to next line based on max font size on this line
+        currentY += maxFontOnLine * lineHeight;
     }
     
     // Create P distribution array (one entry per word)
@@ -182,98 +243,143 @@ function initializePDistribution() {
 
 function processUserInput(inputText) {
     if (!inputText || inputText.trim() === "") {
-        userInput = "";
-        initializeQDistribution("");
-        calculateKLField();
+        // Only clear if explicitly empty (user wants to reset)
+        // For now, keep accumulated words
         return;
     }
     
-    userInput = inputText;
-    
-    // Parse user input into words (remove punctuation, lowercase)
-    let inputWords = inputText.toLowerCase()
+    // Parse new input words
+    let newWords = inputText.toLowerCase()
         .replace(/[^\w\s]/g, ' ')
         .split(/\s+/)
         .filter(w => w.length > 0);
     
-    // Count word frequencies in input
+    if (newWords.length === 0) return;
+    
+    // Add new words to accumulated list (for display)
+    accumulatedWords = accumulatedWords.concat(newWords);
+    userInput = accumulatedWords.join(' '); // Store for display purposes
+    
+    // Count word frequencies for THIS entry only (not accumulated)
     let inputFreq = {};
-    inputWords.forEach(word => {
+    newWords.forEach(word => {
         inputFreq[word] = (inputFreq[word] || 0) + 1;
     });
     
-    // Normalize input frequencies
-    let total = inputWords.length;
+    // Normalize input frequencies for this entry
+    let total = newWords.length;
     if (total > 0) {
         Object.keys(inputFreq).forEach(word => {
             inputFreq[word] = inputFreq[word] / total;
         });
     }
     
-    // Create Q distribution matching P layout
-    initializeQDistribution(inputText, inputFreq);
-    
-    // Reset degradation
-    degradationStep = 0;
-    
-    // Apply initial degradation
-    applyDegradation();
-    applyDegradation();
-    
-    // Calculate KL field
-    calculateKLField();
-}
-
-function initializeQDistribution(inputText, inputFreq = {}) {
-    // Create Q words matching P layout positions
-    qWords = [];
-    
-    if (Object.keys(inputFreq).length === 0) {
-        // No input, set Q to very small values
-        for (let i = 0; i < pWords.length; i++) {
-            qWords.push({
-                word: pWords[i].word,
-                x: pWords[i].x,
-                y: pWords[i].y,
-                fontSize: pWords[i].fontSize,
-                prob: 0.0001
-            });
-        }
-    } else {
-        for (let i = 0; i < pWords.length; i++) {
-            let pWord = pWords[i];
-            let wordKey = pWord.word.toLowerCase();
-            
-            // Get frequency from input, or use small default
-            let freq = inputFreq[wordKey] || 0.0001;
-            
-            qWords.push({
-                word: pWord.word,
-                x: pWord.x,
-                y: pWord.y,
-                fontSize: pWord.fontSize,
-                prob: freq
-            });
+    // Find overlapping words for THIS entry
+    let overlappingIndices = [];
+    for (let i = 0; i < pWords.length; i++) {
+        let pWord = pWords[i];
+        
+        // Check if this P word has wordPositions (individual words within concatenated string)
+        if (pWord.wordPositions) {
+            // Check each individual word in the concatenated string
+            for (let w = 0; w < pWord.wordPositions.length; w++) {
+                let wordPos = pWord.wordPositions[w];
+                let originalWord = wordPos.originalWord.toLowerCase();
+                
+                // Check if this individual word matches any input word
+                if (inputFreq[originalWord] !== undefined) {
+                    overlappingIndices.push(i);
+                    break; // Found a match in this P string, no need to check other words
+                }
+            }
         }
     }
     
-    // Create Q distribution array
-    Q = qWords.map(q => q.prob);
+    // Create a new entry with its own independent degradation timeline
+    let entryId = nextEntryId++;
+    let entry = {
+        entryId: entryId,
+        words: newWords,
+        inputFreq: inputFreq,
+        qWords: [],
+        Q: [],
+        klField: [],
+        degradationStep: 0,
+        overlappingIndices: overlappingIndices
+    };
+    
+    // Initialize Q distribution for this entry
+    initializeQDistributionForEntry(entry);
+    
+    // Apply initial degradation for this entry
+    applyDegradationForEntry(entry);
+    applyDegradationForEntry(entry);
+    
+    // Calculate KL field for this entry
+    calculateKLFieldForEntry(entry);
+    
+    // Add entry to the list
+    inputEntries.push(entry);
+}
+
+function initializeQDistributionForEntry(entry) {
+    // Create Q words only for individual words that match input (not entire concatenated strings)
+    entry.qWords = [];
+    
+    if (entry.overlappingIndices.length === 0) {
+        entry.Q = [];
+        return;
+    }
+    
+    // Only create Q entries for individual words that match user input
+    for (let i = 0; i < entry.overlappingIndices.length; i++) {
+        let pIndex = entry.overlappingIndices[i];
+        let pWord = pWords[pIndex];
+        
+        // Check each individual word within the concatenated string
+        if (pWord.wordPositions) {
+            for (let w = 0; w < pWord.wordPositions.length; w++) {
+                let wordPos = pWord.wordPositions[w];
+                let originalWord = wordPos.originalWord.toLowerCase();
+                
+                // Check if this individual word matches any input word
+                if (entry.inputFreq[originalWord] !== undefined) {
+                    let freq = entry.inputFreq[originalWord];
+                    
+                    entry.qWords.push({
+                        word: wordPos.word,
+                        x: wordPos.x, // Use the stored word position x
+                        y: pWord.y,
+                        fontSize: pWord.fontSize,
+                        prob: freq,
+                        pIndex: pIndex,  // Store reference to P index
+                        wordPosition: wordPos, // Store word position info
+                        entryId: entry.entryId // Track which entry this belongs to
+                    });
+                }
+            }
+        }
+    }
+    
+    // Create Q distribution array (only for overlapping words)
+    entry.Q = entry.qWords.map(q => q.prob);
     
     // Normalize Q
-    let sumQ = Q.reduce((a, b) => a + b, 0);
+    let sumQ = entry.Q.reduce((a, b) => a + b, 0);
     if (sumQ > 0) {
-        Q = Q.map(q => q / sumQ);
+        entry.Q = entry.Q.map(q => q / sumQ);
         // Update probabilities in qWords
-        for (let i = 0; i < qWords.length; i++) {
-            qWords[i].prob = Q[i];
+        for (let i = 0; i < entry.qWords.length; i++) {
+            entry.qWords[i].prob = entry.Q[i];
         }
     } else {
         // If sum is 0, set all to equal small values
-        let smallVal = 1.0 / Q.length;
-        Q = Q.map(() => smallVal);
-        for (let i = 0; i < qWords.length; i++) {
-            qWords[i].prob = smallVal;
+        if (entry.Q.length > 0) {
+            let smallVal = 1.0 / entry.Q.length;
+            entry.Q = entry.Q.map(() => smallVal);
+            for (let i = 0; i < entry.qWords.length; i++) {
+                entry.qWords[i].prob = smallVal;
+            }
         }
     }
 }
@@ -292,90 +398,123 @@ function initializeCensorship() {
     }
 }
 
-function applyDegradation() {
-    if (degradationStep >= maxDegradationSteps) return;
+function applyDegradationForEntry(entry) {
+    // Apply degradation to a specific entry independently
+    if (entry.degradationStep >= maxDegradationSteps) return;
     
-    degradationStep++;
+    entry.degradationStep++;
     
     // Apply sampling bias
-    applySamplingBias();
+    applySamplingBiasForEntry(entry);
     
     // Apply lossy compression
-    applyLossyCompression();
+    applyLossyCompressionForEntry(entry);
     
     // Apply noise injection
-    applyNoiseInjection();
+    applyNoiseInjectionForEntry(entry);
     
     // Apply censorship
-    applyCensorship();
+    applyCensorshipForEntry(entry);
     
     // Normalize Q after degradation
-    let sumQ = Q.reduce((a, b) => a + b, 0);
+    let sumQ = entry.Q.reduce((a, b) => a + b, 0);
     if (sumQ > 0) {
-        Q = Q.map(q => q / sumQ);
+        entry.Q = entry.Q.map(q => q / sumQ);
         // Update probabilities in qWords
-        for (let i = 0; i < qWords.length; i++) {
-            qWords[i].prob = Q[i];
+        for (let i = 0; i < entry.qWords.length; i++) {
+            entry.qWords[i].prob = entry.Q[i];
         }
     }
     
-    // Calculate KL divergence field
-    calculateKLField();
+    // Calculate KL divergence field for this entry
+    calculateKLFieldForEntry(entry);
 }
 
-function applySamplingBias() {
-    // Bias towards certain regions (center bias)
-    for (let i = 0; i < Q.length; i++) {
-        let word = qWords[i];
+function applySamplingBiasForEntry(entry) {
+    // Bias towards certain regions (center bias) - only on overlapping words for this entry
+    for (let i = 0; i < entry.Q.length; i++) {
+        let word = entry.qWords[i];
         let centerX = width / 2;
         let centerY = height / 2;
         let dist = sqrt((word.x - centerX) ** 2 + (word.y - centerY) ** 2);
         let maxDist = sqrt(centerX ** 2 + centerY ** 2);
         let bias = 1 - (dist / maxDist) * samplingBias;
-        Q[i] *= bias;
+        entry.Q[i] *= bias;
     }
 }
 
-function applyLossyCompression() {
-    // Quantize values (lossy compression)
+function applyLossyCompressionForEntry(entry) {
+    // Quantize values (lossy compression) - only on overlapping words for this entry
+    // Make compression less aggressive to prevent Q from disappearing
     let quantizationLevels = 8;
-    for (let i = 0; i < Q.length; i++) {
-        Q[i] = floor(Q[i] * quantizationLevels) / quantizationLevels;
-        Q[i] *= (1 - compressionLoss);
+    // Time-dependent compression: less aggressive early, more later
+    let timeBasedLoss = compressionLoss * (1 + entry.degradationStep * 0.01); // Gradually increase
+    let actualLoss = min(timeBasedLoss, 0.12); // Cap at 12% to prevent total loss
+    
+    for (let i = 0; i < entry.Q.length; i++) {
+        entry.Q[i] = floor(entry.Q[i] * quantizationLevels) / quantizationLevels;
+        entry.Q[i] *= (1 - actualLoss);
+        entry.Q[i] = max(entry.Q[i], 0.0001); // Ensure minimum value to prevent complete disappearance
     }
 }
 
-function applyNoiseInjection() {
-    // Add random noise
-    for (let i = 0; i < Q.length; i++) {
-        Q[i] += random(-noiseLevel, noiseLevel);
-        Q[i] = max(0, Q[i]); // Ensure non-negative
+function applyNoiseInjectionForEntry(entry) {
+    // Add random noise - only on overlapping words for this entry
+    for (let i = 0; i < entry.Q.length; i++) {
+        entry.Q[i] += random(-noiseLevel, noiseLevel);
+        entry.Q[i] = max(0, entry.Q[i]); // Ensure non-negative
     }
 }
 
-function applyCensorship() {
-    // Zero out censorship regions
+function applyCensorshipForEntry(entry) {
+    // Apply censorship with probability - only on overlapping words for this entry
+    // Make it time-dependent: more censorship over time, but not all at once
+    let timeBasedCensorshipProb = min(censorshipProbability * (1 + entry.degradationStep * 0.02), 0.6);
+    
     for (let region of censorshipRegions) {
-        for (let i = 0; i < qWords.length; i++) {
-            let word = qWords[i];
+        for (let i = 0; i < entry.qWords.length; i++) {
+            let word = entry.qWords[i];
             if (word.x >= region.x && word.x <= region.x + region.w &&
                 word.y >= region.y && word.y <= region.y + region.h) {
-                Q[i] = 0;
+                // Apply censorship with probability, and make it partial (not complete zero)
+                if (random() < timeBasedCensorshipProb) {
+                    entry.Q[i] *= 0.1; // Reduce to 10% instead of zeroing completely
+                }
             }
         }
     }
 }
 
-function calculateKLField() {
-    // Damage(i) = P(i) * log(P(i) / Q(i))
-    klField = [];
+function calculateKLFieldForEntry(entry) {
+    // Damage(i) = P(i) * log(P(i) / Q(i)) * exp(klTimeExponent * t)
+    // Exponential time factor amplifies loss over time
+    // Only calculate for overlapping words for this entry
+    entry.klField = [];
+    
+    // Calculate exponential time factor: exp(klTimeExponent * degradationStep)
+    // This grows exponentially with degradation steps for THIS entry
+    let timeFactor = exp(klTimeExponent * entry.degradationStep);
+    
+    // Initialize all to 0
     for (let i = 0; i < P.length; i++) {
-        if (Q[i] > 0 && P[i] > 0) {
-            klField[i] = P[i] * log(P[i] / Q[i]);
-        } else if (P[i] > 0) {
-            klField[i] = Infinity; // Handle division by zero
-        } else {
-            klField[i] = 0;
+        entry.klField[i] = 0;
+    }
+    
+    // Calculate KL only for overlapping words in this entry
+    for (let i = 0; i < entry.qWords.length; i++) {
+        let qWord = entry.qWords[i];
+        let pIndex = qWord.pIndex;
+        let pProb = P[pIndex];
+        let qProb = entry.Q[i];
+        
+        if (qProb > 0 && pProb > 0) {
+            // Base KL divergence
+            let baseKL = pProb * log(pProb / qProb);
+            // Apply exponential time factor to amplify loss
+            entry.klField[pIndex] = baseKL * klBaseMultiplier * timeFactor;
+        } else if (pProb > 0) {
+            // For censored words (Q = 0), KL is already infinity
+            entry.klField[pIndex] = Infinity; // Handle division by zero
         }
     }
 }
@@ -383,31 +522,38 @@ function calculateKLField() {
 function draw() {
     background(0);
     
-    // Apply degradation over time
-    if (frameCount % 30 == 0 && degradationStep < maxDegradationSteps && userInput !== "") {
-        applyDegradation();
+    // Apply degradation over time for each entry independently
+    // Higher number = slower degradation (applies every 60 frames = ~1 second at 60fps)
+    if (frameCount % 60 == 0) {
+        for (let entry of inputEntries) {
+            if (entry.degradationStep < maxDegradationSteps) {
+                applyDegradationForEntry(entry);
+            }
+        }
     }
     
     // Layer 1: Truth (P) - Light grey words
     drawLayer1();
     
-    // Layer 2: Model (Q) - User input words (if any)
-    if (userInput !== "") {
-        drawLayer2();
-    }
+    // Layer 2: Model (Q) - HIDDEN (only showing destruction/distortion)
+    // if (userInput !== "") {
+    //     drawLayer2();
+    // }
     
-    // Layer 3: KL Field - Primary Visual (fracture effects on words)
-    if (userInput !== "") {
-        drawLayer3();
+    // Layer 3: KL Field - Primary Visual (destruction/distortion effects only)
+    // Draw effects for all entries independently
+    for (let entry of inputEntries) {
+        drawLayer3ForEntry(entry);
     }
 }
 
 function drawLayer1() {
-    // Draw P words in light grey
+    // Draw P words in dimmed light grey with custom font
     push();
-    fill(200, 200, 200, 100); // Light grey, semi-transparent
+    fill(200, 200, 200, 50); // Very dim: ~20% opacity (reduced from 80/31%)
     noStroke();
     textAlign(LEFT, BASELINE);
+    textFont('Doto, sans-serif'); // Apply custom font
     
     for (let i = 0; i < pWords.length; i++) {
         let word = pWords[i];
@@ -417,76 +563,108 @@ function drawLayer1() {
     pop();
 }
 
-function drawLayer2() {
-    // Draw Q words (user input) - visible but may be degraded
-    push();
-    fill(255, 255, 255, 180);
-    noStroke();
-    textAlign(LEFT, BASELINE);
-    
-    for (let i = 0; i < qWords.length; i++) {
-        let word = qWords[i];
-        if (Q[i] > 0.0001) { // Only draw if probability is significant
-            textSize(word.fontSize);
-            // Fade based on degradation
-            let alpha = map(Q[i], 0, max(Q), 100, 255);
-            fill(255, 255, 255, alpha);
-            text(word.word, word.x, word.y);
-        }
-    }
-    pop();
-}
+// drawLayer2 removed - only showing destruction effects (Layer 3)
 
-function drawLayer3() {
-    // Draw KL Field effects on words
+function drawLayer3ForEntry(entry) {
+    // Draw KL Field effects on words for a specific entry
     // Map KL divergence to:
     // - Text fragmentation
     // - Character displacement
     // - Opacity changes
     
-    let finiteKLs = klField.filter(k => isFinite(k) && k > 0);
+    if (entry.qWords.length === 0) return;
+    
+    // Get finite KL values only from overlapping words in this entry
+    let finiteKLs = [];
+    for (let i = 0; i < entry.qWords.length; i++) {
+        let pIndex = entry.qWords[i].pIndex;
+        let kl = entry.klField[pIndex];
+        if (isFinite(kl) && kl > 0) {
+            finiteKLs.push(kl);
+        }
+    }
+    
     let maxKL = finiteKLs.length > 0 ? max(finiteKLs) : 0.001;
     if (maxKL == 0) maxKL = 0.001;
     
     push();
     textAlign(LEFT, BASELINE);
     
-    for (let i = 0; i < klField.length; i++) {
-        let kl = klField[i];
+    // Only process overlapping words for this entry
+    for (let i = 0; i < entry.qWords.length; i++) {
+        let qWord = entry.qWords[i];
+        let pIndex = qWord.pIndex;
+        let kl = entry.klField[pIndex];
+        
         if (!isFinite(kl) || kl < 0) {
             kl = maxKL * 1.5;
         }
         
         let normalizedKL = min(kl / maxKL, 1.0);
         
-        // Only draw effects if KL is significant
-        if (normalizedKL > 0.1) {
-            let word = qWords[i];
-            let pWord = pWords[i];
+        // Draw effects for all words with KL > 0 (even small values show some effect)
+        if (normalizedKL > 0) {
+            // Time-based entropy factor: makes chaos increase over time for THIS entry
+            let timeEntropyFactor = 1 + (entry.degradationStep / maxDegradationSteps) * 1; // 1x to 2x over time (reduced)
+            let entropyKL = normalizedKL * timeEntropyFactor;
+            let clampedEntropyKL = min(entropyKL, 1.0);
             
-            // Map to visual effects
-            let intensity = map(normalizedKL, 0, 1, 0, 255);
-            let displacement = normalizedKL * 10;
+            // Map to visual effects with time-based amplification
+            // Opacity decreases over time (harder to see) - entropy effect
+            let baseIntensity = map(clampedEntropyKL, 0, 1, 150, 255);
+            let timeBasedOpacity = baseIntensity * (1 - entry.degradationStep / maxDegradationSteps * 0.5); // Fade over time
+            let intensity = constrain(timeBasedOpacity, 50, 255);
             
-            // Draw fragmented/displaced characters
-            if (normalizedKL > 0.3) {
-                textSize(word.fontSize);
-                fill(255, intensity * 0.8);
-                noStroke();
+            // Displacement increases over time (more chaotic)
+            // Start small, grow gradually over time
+            let baseDisplacement = clampedEntropyKL * 8; // Smaller initial displacement
+            // Slower growth: starts at 1x, grows to ~2.5x at max steps (reduced multiplier)
+            let timeMultiplier = 1 + (entry.degradationStep / maxDegradationSteps) * 1.5; // 1x to 2.5x over time (reduced)
+            let displacement = baseDisplacement * timeMultiplier;
+            
+            // Get the correct word position (individual word within concatenated string)
+            let wordX = qWord.x;
+            if (qWord.wordPosition) {
+                wordX = qWord.wordPosition.x;
+            }
+            
+            // Add time-based flicker for entropy effect (makes it harder to see)
+            let flicker = sin(frameCount * 0.1 + wordX * 0.01) * (entry.degradationStep / maxDegradationSteps) * 30;
+            intensity += flicker;
+            intensity = constrain(intensity, 30, 255);
+            
+            textSize(qWord.fontSize);
+            textFont('Doto, sans-serif'); // Apply custom font
+            fill(255, intensity);
+            noStroke();
+            
+            // Displace characters with time-based chaos
+            // Add more chaotic displacement over time
+            let chaosX = sin(wordX * 0.1 + frameCount * 0.01) * displacement;
+            let chaosY = cos(qWord.y * 0.1 + frameCount * 0.015) * displacement;
+            // Add per-character random scatter that increases dramatically over time
+            let scatterAmount = entry.degradationStep * 0.8; // Reduced scatter over time
+            
+            // Draw word with displacement and fragmentation
+            // Fragmentation: higher KL + time = more characters missing
+            let chars = qWord.word.split('');
+            let charX = wordX + chaosX;
+            for (let j = 0; j < chars.length; j++) {
+                // Fragmentation probability increases with KL and time
+                let baseFragmentProb = clampedEntropyKL * 0.5;
+                let timeFragmentBoost = (entry.degradationStep / maxDegradationSteps) * 0.15; // Up to 15% more fragmentation (reduced)
+                let fragmentProb = min(baseFragmentProb + timeFragmentBoost, 0.8); // Cap at 80% missing
                 
-                // Displace characters
-                let offsetX = sin(word.x * 0.1) * displacement;
-                let offsetY = cos(word.y * 0.1) * displacement;
+                // Per-character scatter (increases over time)
+                let charScatterX = random(-scatterAmount, scatterAmount);
+                let charScatterY = random(-scatterAmount, scatterAmount);
                 
-                // Draw word with displacement and fragmentation
-                let chars = word.word.split('');
-                let charX = word.x + offsetX;
-                for (let j = 0; j < chars.length; j++) {
-                    if (random() > normalizedKL * 0.3) { // Some characters missing (fragmentation)
-                        text(chars[j], charX, word.y + offsetY);
-                    }
-                    charX += textWidth(chars[j]);
+                if (random() > fragmentProb) { // Draw character if random > fragmentProb
+                    // Apply per-character displacement for more chaos
+                    text(chars[j], charX + charScatterX, qWord.y + chaosY + charScatterY);
                 }
+                // Always advance charX to maintain spacing even if character is missing
+                charX += textWidth(chars[j]);
             }
         }
     }
@@ -498,12 +676,12 @@ function windowResized() {
     resizeCanvas(windowWidth, windowHeight);
     // Reinitialize P distribution with new dimensions
     initializePDistribution();
-    // Reinitialize Q if there's user input
-    if (userInput !== "") {
-        processUserInput(userInput);
-    } else {
-        initializeQDistribution("");
-    }
+    // Reinitialize all entries with new dimensions
+    // Note: This will reset entries, but in a real app you might want to preserve them
+    // For now, we'll clear entries on resize
+    inputEntries = [];
+    nextEntryId = 0;
+    accumulatedWords = [];
+    userInput = "";
     initializeCensorship();
-    calculateKLField();
 }
