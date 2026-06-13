@@ -25,7 +25,31 @@ The KL divergence maps to visual effects:
 
 ## Setup
 
-Open `index.html` in a web browser
+### Relay (recommended — all three projects + WebSocket)
+
+From the workspace root:
+
+```bash
+cd relay
+npm install
+npm start
+```
+
+Open http://localhost:8765/ for links. Example:
+
+- Poster: http://localhost:8765/destruction/
+- Input: http://localhost:8765/destruction/input/
+
+Poster can run on a separate display or machine; input connects via WebSocket.
+
+### Standalone (single project, same-browser tabs)
+
+```bash
+cd Destruction
+python -m http.server 8765
+```
+
+Uses BroadcastChannel fallback when WebSocket is unavailable.
 
 ## Customization
 
